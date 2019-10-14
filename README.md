@@ -29,6 +29,12 @@ s3_file "/tmp/somefile" do
 end
 ```
 
+### Caveats
+
+* `s3_url` is currently ignored.
+* It assumes `aws s3api` CLI for now.
+* `IO.popen` and mruby-shellwords should be available in mruby.
+
 ## License
 
 ```
