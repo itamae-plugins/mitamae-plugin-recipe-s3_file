@@ -12,6 +12,8 @@ and execute `mitamae local` where you can find `./plugins` directory.
 ### Example
 
 ```rb
+include_recipe 's3_file'
+
 s3_file "/tmp/somefile" do
   remote_path "/my/s3/key"
   bucket "my-s3-bucket"
