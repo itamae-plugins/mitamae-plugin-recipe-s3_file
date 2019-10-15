@@ -1,11 +1,51 @@
 module ::S3FileLib
-  def self.get_md5_from_s3(*args)
+  def self.get_md5_from_s3(bucket, url, path, aws_access_key_id, aws_secret_access_key, token, region = nil)
+    aws_cli_env = {'AWS_ACCESS_KEY_ID' => aws_access_key_id, 'AWS_SECRET_ACCESS_KEY' => aws_secret_access_key}
+    key = path.sub(/\A\//, '')
+    out, _err, status = with_env(aws_cli_env) do
+      Open3.capture3('aws', 's3api', 'head-object', '--bucket', bucket, '--key', key)
+    end
+    if status.success? && !out.empty?
+      JSON.parse(out)['Metadata']['md5']
+    else
+      nil # return nil to always download
+    end
   end
 
-  def self.verify_md5_checksum(*args)
+  def self.get_from_s3(bucket, _url, path, aws_access_key_id, aws_secret_access_key, _token, region = nil, outfile:)
+    aws_cli_env = {'AWS_ACCESS_KEY_ID' => aws_access_key_id, 'AWS_SECRET_ACCESS_KEY' => aws_secret_access_key}
+    key = path.sub(/\A\//, '')
+    out, err, status = with_env(aws_cli_env) do
+      Open3.capture3(
+        'aws', 's3api', 'get-object', '--bucket', bucket, '--key', key, outfile
+      )
+    end
+    unless status.success?
+      raise "Failed to execute `aws s3api get-object --bucket #{bucket} --key #{key} #{outfile}`:\nstdout:\n```\n#{out}```\nstderr:\n```\n#{err}```"
+    end
   end
 
-  def self.get_from_s3(*args)
+  def self.verify_md5_checksum(checksum, file)
+    local_file_md5sum = ::IO.popen("md5sum #{file.shellescape}") do |io|
+      io.read.split(/\s+/).first
+    end
+    checksum == local_file_md5sum
+  end
+
+  # mruby's Open3.capture3 does not take the optional env argument yet. This is a workaround for it.
+  class << self
+    private def with_env(env, &block)
+      orig = {}
+      env.each do |key, value|
+        orig[key] = ENV[key]
+        ENV[key] = value
+      end
+      block.call
+    ensure
+      orig.each do |key, value|
+        ENV[key] = value
+      end
+    end
   end
 end
 
@@ -18,7 +58,7 @@ define(
   aws_access_key_id: nil,
   aws_secret_access_key: nil,
   s3_url: nil, # ignored actually
-  token: nil,
+  token: nil, # ignored actually
   owner: nil,
   group: nil,
   mode: nil,
@@ -46,12 +86,12 @@ define(
   if ::File.exists?(path)
     if decryption_key.nil?
       if params[:decrypted_file_checksum].nil?
-        #s3_md5 = S3FileLib::get_md5_from_s3(params[:bucket], params[:s3_url], remote_path, aws_access_key_id, aws_secret_access_key, token)
+        s3_md5 = S3FileLib.get_md5_from_s3(params[:bucket], params[:s3_url], remote_path, aws_access_key_id, aws_secret_access_key, token)
 
-        #if S3FileLib::verify_md5_checksum(s3_md5, path)
-        #  MItamae.logger.debug 'Skipping download, md5sum of local file matches file in S3.'
-        #  download = false
-        #end
+        if S3FileLib.verify_md5_checksum(s3_md5, path)
+          MItamae.logger.debug 'Skipping download, md5sum of local file matches file in S3.'
+          download = false
+        end
       #we have a decryption key so we must switch to the sha256 checksum
       else
         # TODO: support this
@@ -66,7 +106,14 @@ define(
   end
 
   if download
-    #response = S3FileLib::get_from_s3(params[:bucket], new_resource.s3_url, remote_path, aws_access_key_id, aws_secret_access_key, token)
+    bucket = params[:bucket]
+    s3_url = params[:s3_url]
+    # Using `local_ruby_block` to avoid putting it on the recipe evaluation phase.
+    local_ruby_block "s3_file[#{path}]" do
+      block do
+        S3FileLib.get_from_s3(bucket, s3_url, remote_path, aws_access_key_id, aws_secret_access_key, token, outfile: path)
+      end
+    end
 
     # not simply using the file resource here because we would have to buffer
     # whole file into memory in order to set content this solves
@@ -75,7 +122,7 @@ define(
       # TODO: support this
       raise NotImplementedError, "decryption_key attribute is not supported by s3_file[#{params[:name]}]"
     else
-      #::FileUtils.mv(response.file.path, path)
+      # Directly put to outfile
     end
   end
 

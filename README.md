@@ -33,7 +33,7 @@ end
 
 * `s3_url` is currently ignored.
 * It assumes `aws s3api` CLI for now.
-* `IO.popen` and mruby-shellwords should be available in mruby.
+* mruby-open3 and mruby-shellwords should be available in mruby.
 
 ## License
 
