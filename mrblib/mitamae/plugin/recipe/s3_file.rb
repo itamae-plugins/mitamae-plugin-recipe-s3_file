@@ -82,13 +82,13 @@ define(
     raise NotImplementedError, "aws_access_key_id/aws_secret_access_key attributes are nil in s3_file[#{params[:name]}]"
   end
 
-  path = params[:name]
-  if ::File.exists?(path)
+  s3_path = params[:name]
+  if ::File.exists?(s3_path)
     if decryption_key.nil?
       if params[:decrypted_file_checksum].nil?
         s3_md5 = S3FileLib.get_md5_from_s3(params[:bucket], params[:s3_url], remote_path, aws_access_key_id, aws_secret_access_key, token)
 
-        if S3FileLib.verify_md5_checksum(s3_md5, path)
+        if S3FileLib.verify_md5_checksum(s3_md5, s3_path)
           MItamae.logger.debug 'Skipping download, md5sum of local file matches file in S3.'
           download = false
         end
@@ -109,9 +109,9 @@ define(
     bucket = params[:bucket]
     s3_url = params[:s3_url]
     # Using `local_ruby_block` to avoid putting it on the recipe evaluation phase.
-    local_ruby_block "s3_file[#{path}]" do
+    local_ruby_block "s3_file[#{s3_path}]" do
       block do
-        S3FileLib.get_from_s3(bucket, s3_url, remote_path, aws_access_key_id, aws_secret_access_key, token, outfile: path)
+        S3FileLib.get_from_s3(bucket, s3_url, remote_path, aws_access_key_id, aws_secret_access_key, token, outfile: s3_path)
       end
     end
 
@@ -126,7 +126,7 @@ define(
     end
   end
 
-  file path do
+  file s3_path do
     action :create
     owner params[:owner] || ENV['user']
     group params[:group] || ENV['user']
