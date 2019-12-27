@@ -1,15 +1,19 @@
 module ::S3FileLib
-  def self.get_md5_from_s3(bucket, url, path, aws_access_key_id, aws_secret_access_key, token, region = nil)
+  def self.get_metadata_from_s3(bucket, url, path, aws_access_key_id, aws_secret_access_key, token, region = nil, metadata_keys:)
     aws_cli_env = {'AWS_ACCESS_KEY_ID' => aws_access_key_id, 'AWS_SECRET_ACCESS_KEY' => aws_secret_access_key}
     key = path.sub(/\A\//, '')
     out, _err, status = with_env(aws_cli_env) do
       Open3.capture3('aws', 's3api', 'head-object', '--bucket', bucket, '--key', key)
     end
     if status.success? && !out.empty?
-      JSON.parse(out)['Metadata']['md5']
-    else
-      nil # return nil to always download
+      metadata = JSON.parse(out)['Metadata']
+      metadata_keys.each do |metadata_key|
+        if metadata[metadata_key]
+          return metadata_key, metadata[metadata_key]
+        end
+      end
     end
+    return nil, nil # return nil to always download
   end
 
   def self.get_from_s3(bucket, _url, path, aws_access_key_id, aws_secret_access_key, _token, region = nil, outfile:)
@@ -25,11 +29,12 @@ module ::S3FileLib
     end
   end
 
-  def self.verify_md5_checksum(checksum, file)
-    local_file_md5sum = ::IO.popen("md5sum #{file.shellescape}") do |io|
+  def self.verify_checksum(checksum_hash, checksum, file)
+    checksum_hash ||= 'md5'
+    local_file_checksum = ::IO.popen("#{checksum_hash.shellescape}sum #{file.shellescape}") do |io|
       io.read.split(/\s+/).first
     end
-    checksum == local_file_md5sum
+    checksum == local_file_checksum
   end
 
   # mruby's Open3.capture3 does not take the optional env argument yet. This is a workaround for it.
@@ -64,6 +69,7 @@ define(
   mode: nil,
   decryption_key: nil,
   decrypted_file_checksum: nil,
+  checksum_hashes: ['md5'], # mitamae-plugin-recipe-s3_file's original behavior
 ) do # action :create https://github.com/adamsb6/s3_file/blob/v2.7/providers/default.rb
   download = true
 
@@ -86,9 +92,12 @@ define(
   if ::File.exists?(s3_path)
     if decryption_key.nil?
       if params[:decrypted_file_checksum].nil?
-        s3_md5 = S3FileLib.get_md5_from_s3(params[:bucket], params[:s3_url], remote_path, aws_access_key_id, aws_secret_access_key, token)
+        checksum_hash, s3_checksum = S3FileLib.get_metadata_from_s3(
+          params[:bucket], params[:s3_url], remote_path, aws_access_key_id, aws_secret_access_key, token,
+          metadata_keys: params[:checksum_hashes],
+        )
 
-        if S3FileLib.verify_md5_checksum(s3_md5, s3_path)
+        if S3FileLib.verify_checksum(checksum_hash, s3_checksum, s3_path)
           MItamae.logger.debug 'Skipping download, md5sum of local file matches file in S3.'
           download = false
         end
